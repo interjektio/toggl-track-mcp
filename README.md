@@ -1,332 +1,178 @@
 # Toggl Track MCP Server
 
-A Model Context Protocol (MCP) server for Toggl Track time tracking integration. This server allows Claude and other MCP clients to interact with your Toggl Track account to manage projects and time entries.
+A [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude and
+other MCP clients read and update your [Toggl Track](https://toggl.com/track/) time
+tracking: list and summarise time entries, start and stop timers, and manage project tasks.
 
-> This server is 100% written by Claude Code, except for BUILD_APP.md, which I wrote to guide the creation of the server
-> This has not be extensively tested (honestly, I've barely read the code!) so improvements can definitely be made.
+This is Interjektio's hardened fork of
+[vontell/toggl-track-mcp](https://github.com/vontell/toggl-track-mcp). See
+[Changes from upstream](#changes-from-upstream).
 
-![Claude Code](example.png)
+![Claude Code using the server](example.png)
 
-## Features
+## Quick start (Docker)
 
-- **Get Projects**: Retrieve all projects from your Toggl Track account
-- **Get Workspaces**: List all workspaces associated with your account
-- **Get Time Entries**: Detailed time entries with filtering by date range and project
-- **Time Summary**: Aggregated time reports by project with percentages
-- **Current Timer**: Check what's currently running and elapsed time
-- **Timer Control**: Start new timers and stop current running timers
-- **Task Management**: Create and retrieve project tasks with time estimates
-- **Search Entries**: Find time entries by description text
-- **Smart Prompts**: Pre-built conversation starters for common time tracking queries
-- Secure API token authentication
-- Formatted, readable output for LLM consumption
+1. Copy your API token from your [Toggl Track profile](https://track.toggl.com/profile).
 
-## Quick Start
+2. Put it in a private env file outside the repository:
 
-### 1. Get Your Toggl Track API Token
+   ```bash
+   mkdir -p ~/.config/toggl-track-mcp
+   install -m 600 .env.example ~/.config/toggl-track-mcp/env
+   $EDITOR ~/.config/toggl-track-mcp/env   # set TOGGL_API_TOKEN=...
+   ```
 
-1. Go to your [Toggl Track profile settings](https://track.toggl.com/profile)
-2. Copy your API token from the "API Token" section
-3. Keep this token handy for the configuration step
+3. Build the image:
 
-### 2. Build the Docker Image
+   ```bash
+   docker build -t toggl-track-mcp .
+   ```
 
-Clone this repository and build the Docker image:
+4. Register the server with your MCP client.
 
-```bash
-git clone git@github.com:vontell/toggl-track-mcp.git
-cd toggl-track-mcp
-docker build -t toggl-track-mcp .
-```
+   **Claude Code**:
 
-### 3. Configure Claude Desktop
+   ```bash
+   claude mcp add toggl-track -- \
+     docker run -i --rm --env-file /home/YOU/.config/toggl-track-mcp/env toggl-track-mcp
+   ```
 
-Add the server to your Claude Desktop configuration file:
+   **Claude Desktop** (`claude_desktop_config.json`):
 
-**Location:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+   ```json
+   {
+     "mcpServers": {
+       "toggl-track": {
+         "command": "docker",
+         "args": [
+           "run", "-i", "--rm",
+           "--env-file", "/Users/YOU/.config/toggl-track-mcp/env",
+           "toggl-track-mcp"
+         ]
+       }
+     }
+   }
+   ```
 
-```json
-{
-  "mcpServers": {
-    "Toggl Track": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e",
-        "TOGGL_API_TOKEN",
-        "toggl-track-mcp"
-      ],
-      "env": {
-        "TOGGL_API_TOKEN": "your_api_token_here"
-      }
-    }
-  }
-}
-```
+   Using `--env-file` keeps the token out of the client configuration file.
 
-**Important:** Replace `"your_api_token_here"` with your actual Toggl Track API token.
+### Without Docker
 
-### 4. Restart Claude Desktop
-
-After updating the configuration, restart Claude Desktop to load the new MCP server.
-
-### 5. Verify Installation
-
-Once restarted, you should be able to ask Claude questions like:
-- "What projects do I have in Toggl Track?"
-- "Start a timer for 'Code review'"
-- "What's my current timer status?"
-
----
-
-## Development Setup
-
-For development and testing:
-
-### Local Development
-
-Create a virtual environment:
+With [uv](https://docs.astral.sh/uv/) installed:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: venv\Scripts\activate
+uv sync --locked
+uv run --locked --env-file ~/.config/toggl-track-mcp/env toggl-track-mcp
 ```
 
-Install dependencies:
+For an MCP client, use the command
+`uv run --locked --project /path/to/toggl-track-mcp --env-file /path/to/env toggl-track-mcp`.
 
-```bash
-pip install -r requirements.txt
-```
+## Configuration
 
-Set your API token:
+| Variable               | Meaning                                                                       |
+|------------------------|-------------------------------------------------------------------------------|
+| `TOGGL_API_TOKEN`      | Toggl Track API token (required).                                             |
+| `TOGGL_API_TOKEN_FILE` | Path to a file containing the token; used when `TOGGL_API_TOKEN` is unset.    |
+| `TOGGL_READ_ONLY`      | `true` exposes only the read-only tools.                                      |
+| `TOGGL_TIMEZONE`       | IANA timezone (e.g. `Europe/Helsinki`) overriding your Toggl profile timezone. |
+| `TOGGL_CACHE_TTL`      | Seconds to cache workspaces, projects and clients. Default `900`.             |
 
-```bash
-export TOGGL_API_TOKEN="your_api_token_here"
-```
+## Tools
 
-### Testing with MCP Inspector
+Dates are `YYYY-MM-DD` in your Toggl profile timezone, and both `start_date` and
+`end_date` are inclusive, so `start_date == end_date` means a single day. Project names
+match case-insensitively; when a name exists in several workspaces, pass `workspace_name`
+or use the numeric project ID.
 
-```bash
-mcp dev server.py
-```
+| Tool                  | Kind  | Description                                                    |
+|-----------------------|-------|----------------------------------------------------------------|
+| `get_workspaces`      | read  | Workspaces and IDs; marks your default workspace.              |
+| `get_projects`        | read  | Projects by workspace, with client, archived and private flags. |
+| `get_time_entries`    | read  | Entries grouped by day with daily totals (default: last 7 days). |
+| `get_time_summary`    | read  | Time per project with percentages (default: last 7 days).      |
+| `search_time_entries` | read  | Entries whose description contains a text (default: 30 days).  |
+| `get_current_timer`   | read  | The running timer and its elapsed time.                        |
+| `get_project_tasks`   | read  | Tasks of one project.                                          |
+| `get_all_tasks`       | read  | Tasks across all your projects.                                |
+| `get_api_quota`       | read  | Remaining Toggl API requests in the current hour.              |
+| `start_timer`         | write | Start a timer, in the project's workspace or your default one. |
+| `stop_current_timer`  | write | Stop the running timer.                                        |
+| `create_project_task` | write | Create a task, optionally with an estimate.                    |
 
-This opens the MCP Inspector for interactive testing.
+Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, ...), so clients
+can ask for confirmation before the write tools run. With `TOGGL_READ_ONLY=true`, the
+write tools and their prompts are not registered at all.
 
-## Available Tools
+The server also provides prompt templates such as `weekly_time_report`,
+`project_deep_dive` and `quick_start_timer`.
 
-### `get_projects`
+## Toggl API limits
 
-Retrieves all projects from your Toggl Track account with details including:
+Toggl [limits API usage](https://engineering.toggl.com/docs/track/): requests to `/me`
+endpoints are capped at about **30 per hour per user** on Free, Starter and Premium
+plans, and workspace requests at 30/240/600 per hour by plan. When the quota is used up
+Toggl answers HTTP 402; there is also a per-second limit (HTTP 429).
 
-- Project name
-- Workspace ID
-- Associated client
-- Color coding
-- Privacy settings
+The server is built around this:
 
-### `get_workspaces`
+- workspaces, projects and clients come from a single `GET /me?with_related_data=true`
+  and are cached (`TOGGL_CACHE_TTL`);
+- time entry lists are cached for 60 seconds and include project names, so a summary
+  followed by a detailed listing costs one request;
+- `get_all_tasks` uses a single `GET /me/tasks` request rather than one per project;
+- requests are spaced at least one second apart, 429 responses are retried with
+  backoff (honouring `Retry-After`), and a 402 quota error says when the quota resets.
 
-Lists all workspaces associated with your Toggl Track account with:
+`GET /me/time_entries` only reaches back about three months and returns at most 1000
+entries; the tools say so when a result may be truncated.
 
-- Workspace name
-- Workspace ID
+## Security notes
 
-### `get_time_entries`
-
-Get detailed time entries with optional filtering:
-
-- **start_date**: Filter by start date (YYYY-MM-DD format, defaults to 7 days ago)
-- **end_date**: Filter by end date (YYYY-MM-DD format, defaults to today)
-- **project_name**: Filter by specific project name
-- Shows entries grouped by date with descriptions, durations, and daily totals
-
-### `get_time_summary`
-
-Get aggregated time summary by project:
-
-- **start_date**: Start date for summary (defaults to 7 days ago)
-- **end_date**: End date for summary (defaults to today)
-- **project_name**: Focus on specific project (optional)
-- Shows total hours by project with percentages and grand total
-
-### `get_current_timer`
-
-Check currently running timer:
-
-- Shows active project and description
-- Displays elapsed time and start time
-- Returns "No timer running" if nothing is active
-
-### `start_timer`
-
-Start a new timer:
-
-- **description**: Description for the time entry (required)
-- **project_name**: Name of project to assign timer to (optional)
-- Automatically uses your primary workspace
-- Returns confirmation with timer details
-
-### `stop_current_timer`
-
-Stop the currently running timer:
-
-- Stops any active timer
-- Shows final duration and time period
-- Returns "No timer running" if nothing is active
-
-### `search_time_entries`
-
-Search time entries by description:
-
-- **query**: Text to search for in descriptions (required)
-- **start_date**: Start date for search range (optional, defaults to 30 days ago)
-- **end_date**: End date for search range (optional, defaults to today)
-- Case-insensitive search with total time calculation
-
-### `get_project_tasks`
-
-Get all tasks for a specific project:
-
-- **project_name**: Name of the project to get tasks for (required)
-- Shows task names, IDs, status (active/inactive), and estimated time
-- Returns helpful error if project not found
-
-### `create_project_task`
-
-Create a new task for a project:
-
-- **project_name**: Name of the project to create the task in (required)
-- **task_name**: Name of the new task (required)
-- **estimated_hours**: Estimated hours for the task (optional)
-- Returns confirmation with task ID and details
-
-### `get_all_tasks`
-
-Get all tasks across all projects:
-
-- Shows tasks organized by project and workspace
-- Displays task names, IDs, status, and estimated time
-- Returns total count of tasks found
-- Skips projects without task access gracefully
-
-## Example Prompts
-
-The server includes pre-built prompts for common scenarios:
-
-### Time Tracking & Analysis
-
-- **detailed_time_report**: Get detailed breakdown of time entries
-- **time_summary_report**: Get aggregated time summary by project
-- **productivity_analysis**: Analyze work patterns and productivity
-- **current_status_check**: Check current timer and today's activity
-- **project_deep_dive**: In-depth analysis of specific project work
-- **search_by_description**: Search time entries by description text
-
-### Timer Control
-
-- **quick_start_timer**: Start a timer with description and optional project
-- **stop_and_start_new**: Stop current timer and start a new one
-- **timer_status_and_control**: Check status and get timer control options
-- **work_session_timer**: Start a focused work session with break reminders
-
-### Task Management
-- **view_project_tasks**: View all tasks for a specific project
-- **create_new_task**: Create a new task with optional time estimates
-- **task_planning_session**: Plan and organize tasks for a project
-- **project_task_overview**: Get overview of tasks across all projects
-- **list_all_tasks**: List all tasks across all projects with details
-
-## Example Usage
-
-Once installed in Claude Desktop, you can ask:
-
-### Project & Workspace Queries
-
-- "What projects do I have in Toggl Track?"
-- "Show me my Toggl workspaces"
-- "List all my time tracking projects"
-
-### Time Entry Analysis
-
-- "Show me my time entries for the last week"
-- "What did I work on yesterday?"
-- "Give me a time summary for project X"
-- "How much time did I spend on each project this month?"
-- "Search my time entries for 'meeting' this week"
-
-### Timer Control
-
-- "What's my current timer status?"
-- "Start a timer for 'Code review' on project ABC"
-- "Stop my current timer"
-- "Start a timer for 'Planning session'"
-
-### Task Management
-- "Show me all tasks for project XYZ"
-- "Create a new task called 'Database migration' for project ABC"
-- "Create a task with 4 hours estimated time"
-- "Help me plan tasks for my current project"
-- "List all tasks across all my projects"
-
-## API Reference
-
-This server uses the [Toggl Track API v9](https://developers.track.toggl.com/docs/). Key endpoints used:
-
-- `GET /api/v9/me/projects` - Get user projects
-- `GET /api/v9/workspaces` - Get user workspaces
-- `GET /api/v9/me/time_entries` - Get time entries
-- `GET /api/v9/me/time_entries/current` - Get current running timer
-- `POST /api/v9/workspaces/{id}/time_entries` - Start new timer
-- `PATCH /api/v9/workspaces/{id}/time_entries/{id}/stop` - Stop timer
-- `GET /api/v9/workspaces/{id}/projects/{id}/tasks` - Get project tasks
-- `POST /api/v9/workspaces/{id}/projects/{id}/tasks` - Create new task
+- The token is sent only to `https://api.track.toggl.com` over HTTPS. Redirects are
+  never followed, so the `Authorization` header cannot be forwarded elsewhere.
+- Project, task, client and workspace names and entry descriptions can be written by
+  other members of a shared workspace. They are rendered as single lines with control,
+  zero-width, bidirectional-override and Unicode tag characters removed, and the server
+  instructions tell the model to treat them as data. This reduces prompt-injection risk
+  but cannot remove it; use `TOGGL_READ_ONLY=true` if you don't need the write tools.
+- All dependencies are pinned in `uv.lock`; the Docker base images are pinned by digest
+  and the container runs as an unprivileged user.
 
 ## Development
 
-### Project Structure
-
-```
-toggl-track-mcp/
-├── server.py              # Main MCP server implementation
-├── requirements.txt       # Python dependencies
-├── .env.example          # Environment variable template
-└── README.md             # This file
+```bash
+uv sync --locked
+uv run --locked pytest
+uv run --locked ruff check src tests
+uv run --locked ruff format --check src tests
 ```
 
-### Adding New Features
+The tests run the tools through an in-process MCP client against a fake Toggl API,
+plus one test that starts the real stdio entry point.
 
-To extend this server with additional Toggl Track functionality:
+To update dependencies, move `exclude-newer` in `pyproject.toml` to a date at least
+two weeks in the past, then run `uv lock --upgrade` and commit `uv.lock`. Update the
+image digests in the `Dockerfile` the same way.
 
-1. Add new methods to the `TogglClient` class
-2. Create new `@mcp.tool()` decorated functions
-3. Handle authentication and error cases
-4. Update this README with the new capabilities
+## Changes from upstream
 
-## Authentication
-
-This server uses Toggl Track's API token authentication method. The token should be provided via the `TOGGL_API_TOKEN` environment variable.
-
-**Security Note**: Never commit your API token to version control. Always use environment variables or secure configuration management.
-
-## Error Handling
-
-The server includes comprehensive error handling for:
-
-- Missing API token configuration
-- Network connectivity issues
-- API authentication failures
-- Malformed API responses
-
-## Rate Limiting
-
-Toggl Track API has rate limiting (approximately 1 request per second). The server respects these limits and provides appropriate error messages if limits are exceeded.
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
-
-## License
-
-This project is open source and available under standard terms.
+- **Works with current dependencies.** Upstream imports `mcp.server.fastmcp`, which
+  no longer exists in `mcp` 2.x, so a fresh build of upstream fails at startup. This fork
+  uses `MCPServer` from `mcp` 2.x.
+- **Pinned supply chain.** `requirements.txt` with `>=` ranges replaced by
+  `pyproject.toml` + `uv.lock` (`uv sync --locked`); base images pinned by digest;
+  container runs as a non-root user; committed `.claude/settings.local.json` removed.
+- **Correct dates.** Dates were naive and in the container's UTC clock, and `end_date`
+  was effectively exclusive, so "today" was missing from the default range. Dates are now
+  inclusive days in your Toggl timezone. The duplicate `get_time_entries_fixed` tool is
+  gone.
+- **Correct workspace.** `start_timer` used the first workspace in the list, not the
+  project's or your default one.
+- **Quota-aware.** Upstream made 2-3 requests per call with no caching, and
+  `get_all_tasks` made one per project while silently hiding errors. See
+  [Toggl API limits](#toggl-api-limits).
+- **Errors are errors.** Failures come back as MCP tool errors (`isError`) instead of
+  ordinary text, and null descriptions no longer crash searches.
+- **Untrusted text sanitised**, tool annotations added, optional read-only mode, and
+  nothing is printed to stdout, which is the MCP protocol channel.
