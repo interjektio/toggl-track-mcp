@@ -1,0 +1,43 @@
+[project]
+name = "toggl-track-mcp"
+version = "0.2.0"
+description = "Model Context Protocol server for Toggl Track time tracking"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.14.5",
+    "mcp>=2.3.0",
+    "pydantic>=2.14.3",
+    "tzdata>=2026.6",
+]
+
+[project.scripts]
+toggl-track-mcp = "toggl_track_mcp.server:main"
+
+[build-system]
+requires = ["uv_build==0.13.7"]
+build-backend = "uv_build"
+
+[tool.uv]
+# Only resolve releases at least two weeks old at the time of locking.
+# Bump this date deliberately when updating dependencies, then `uv lock`.
+exclude-newer = "2026-11-09T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "DTZ", "S", "ASYNC", "BLE", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
