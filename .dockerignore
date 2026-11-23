@@ -1,0 +1,9 @@
+# Allowlist: only what the image build needs. Keeps .env files and other
+# local secrets out of the build context.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!README.md
+!src/
+**/__pycache__
