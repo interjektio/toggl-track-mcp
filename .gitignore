@@ -62,8 +62,8 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
-# Docker
-.dockerignore
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
 
 # Logs
 *.log
